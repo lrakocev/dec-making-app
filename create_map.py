@@ -41,9 +41,9 @@ def get_total_participants_for_story(trial_table):
 
 def get_prefs(trial_table, story_num, participant_id):
 
-	trial_table = trial_table[(trial_table['tasktypedone'] == story_num) & (trial_table['subjectidnumber'] == str(participant_id))]
+	trial_table = trial_table[(trial_table['tasktypedone'] == str(story_num)) & (trial_table['subjectidnumber'] == str(participant_id))]
 
-	trial_date = trial_table['trial_start'].iloc[0].strip()
+	trial_date = trial_table['trial_start'].iloc[1].strip()
 	if len(trial_date) == 1:
 		trial_date = "Mon May 22 00:00:00 1998"
 	trial_tup = time.strptime(trial_date, "%a %b %d %H:%M:%S %Y")
@@ -178,18 +178,21 @@ def combine_normalize_rescale(trial_table, participant_ids, story_threshold):
 			
 			story_score = int(story_prefs[str(story_num)]) if story_prefs else 50
 
-			d = sync_trials(trial_table, story_num, participant_id)
+			try:
+				d = sync_trials(trial_table, story_num, participant_id)
 
-			tot_vals = sum([v for k, v in d.items()])
-			tot_qs = len(d)
+				tot_vals = sum([v for k, v in d.items()])
+				tot_qs = len(d)
 
-			per_q = tot_vals / tot_qs
+				per_q = tot_vals / tot_qs
 
-			scaled = {k:(v*story_score) for k,v in d.items()}
-			renorm = {k: v/per_q for k,v in scaled.items()}
+				scaled = {k:(v*story_score) for k,v in d.items()}
+				renorm = {k: v/per_q for k,v in scaled.items()}
 
-			tot_stories += 1
-			final_vals += Counter(renorm)
+				tot_stories += 1
+				final_vals += Counter(renorm)
+			except:
+				continue
 
 	## play with the normalization here 
 	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100) for (k,v) in final_vals.items()}
@@ -296,14 +299,22 @@ def combine_n_convert(trial_table, participant_ids, story_threshold):
 		n_stories = get_total_stories(trial_table, participant_id)
 
 		for i in range(0,n_stories):
-			story_num = story_order[i]
-			
-			story_score = int(story_prefs[str(story_num)]) if story_prefs else 50
-			if story_score > int(story_threshold):
-				pref_stories +=1
-			
-			final_vals += Counter(sync_trials(trial_table,story_num, participant_id))
-						
+			try:
+
+				story_num = story_order[i]
+
+				try:
+					story_score = int(story_prefs[str(story_num)])
+				except:
+					story_score = 50
+
+				if story_score > int(story_threshold):
+					pref_stories +=1
+				
+
+				final_vals += Counter(sync_trials(trial_table,story_num, participant_id))
+			except:
+				continue	
 		## play with the normalization here 
 
 	final_vals = {(k[0]-1, k[1]-1):v/(pref_stories*100) for (k,v) in final_vals.items()}
@@ -394,19 +405,20 @@ def viz(data, title, figName, vmin, vmax):
 	x = np.arange(1,5)
 	y = np.arange(1,5)
 	X,Y = np.meshgrid(x,y)
-	
+
 	psm = ax.pcolormesh(X, Y, data, cmap=newcmp, rasterized=True, vmin=vmin, vmax=vmax)
 	fig.colorbar(psm, cax = cax)
 	ax.set_xlabel('reward')
 	ax.set_ylabel('cost')
 	ax.set_title(title)
-	fig.savefig(figName)
+	fig.savefig(figName,format="pdf",)
 
 
 if __name__ == "__main__":
 
 	group_by_stories = False
 	group_by_participants = True
+	get_all_participants = False
 
 	new_combined = True
 	re_normalized_combined = False
@@ -416,38 +428,53 @@ if __name__ == "__main__":
 	num_participant_stories = 5
 	session_timing = 25
 
+	conn = psycopg2.connect(database='live_database', host='10.10.21.128', user='postgres', port='5432', password='1234')
+	trial_cursor = conn.cursor()
+
 	if group_by_participants:
-		participant_id = sys.argv[1].rstrip()
 
-		ids = pd.read_excel('ids.xlsx')
-		id_dict = ids.set_index('ID').T.to_dict('list')
+		if get_all_participants:
+			first_pass = "select subjectidnumber from human_dec_making_table group by subjectidnumber having count(distinct tasktypedone) > 7"
 
-		for i in id_dict.items():
-		    k,v = i
-		    id_dict[k] = [str(int(x)) for x in v if not math.isnan(x)]
+			trial_cursor.execute(first_pass)
+			participant_ids = trial_cursor.fetchall()
+			participant_ids = [i[0] for i in participant_ids]
 
-		int_id = int(participant_id)
-		## all the keys of id dict are "primary ids", so if it looks for a secondary (or tertiary id) it'll fail - 
-		## which is good bc that data will already be included in the primary id map
-		if int_id in id_dict:
-			participant_ids = id_dict[int_id]
+		else:
+
+			participant_id = sys.argv[1].rstrip()
+
+			ids = pd.read_excel('ids.xlsx')
+			id_dict = ids.set_index('ID').T.to_dict('list')
+
+			for i in id_dict.items():
+			    k,v = i
+			    id_dict[k] = [str(int(x)) for x in v if not math.isnan(x)]
+
+			int_id = int(participant_id)
+			## all the keys of id dict are "primary ids", so if it looks for a secondary (or tertiary id) it'll fail - 
+			## which is good bc that data will already be included in the primary id map
+			if int_id in id_dict:
+				participant_ids = id_dict[int_id]
 		
 		insert = "('" + "','".join(participant_ids) + "')"
 
-		qry = f"SELECT * FROM public.human_dec_making_table where subjectidnumber in {insert}" 
+		good_stories = ['3', '6', '14', '15', '16', '21', '22']
+		story_insert = "('" + "','".join(good_stories) + "')"
+
+		qry = f"SELECT * FROM public.human_dec_making_table where subjectidnumber in {insert}" #" and tasktypedone in {story_insert}" 
 
 	if group_by_stories:
 		tasktypedone = sys.argv[1].strip()
 		figName = f"all_maps/by_story/grouped_by_story_maps/{tasktypedone}"
 		qry = f"SELECT * FROM public.human_dec_making_table where tasktypedone='{tasktypedone}'" 
 
-	story_threshold = sys.argv[2]
 
-	conn = psycopg2.connect(database='live_database', host='10.10.21.18', user='postgres', port='5432', password='1234')
-	trial_cursor = conn.cursor()
+	story_threshold = sys.argv[2]
 
 	trial_cursor.execute(qry)
 	trial_table = trial_cursor.fetchall()
+
 	trial_df = pd.DataFrame(trial_table)
 	trial_df.columns = ['subjectidnumber', 'in_pain', 'tired', 'hungry', 'age_range', 'gender', 'chosen_tasks','task_order','tasktypedone', 'reward_prefs','cost_prefs','cost_level','reward_level', 'decision_made','trial_index','trial_start','trial_end','trial_elapsed','story_prefs']
 
@@ -471,13 +498,19 @@ if __name__ == "__main__":
 			figName = f"all_maps/combined/scaled_normalized_combined_maps/{participant_id}"
 			a, num_participant_stories = combine_normalize_rescale(trial_df, participant_ids, int(story_threshold))
 		if new_combined:
-			figName = f"all_maps/combined/new_combined_maps/{participant_id}"
-			a, num_participant_stories = combine_normalize_rescale(trial_df, participant_ids, int(story_threshold))
+			figName = f"all_maps/combined/pdfs/{participant_id}"
+			a, num_participant_stories = combine_n_convert(trial_df, participant_ids, int(story_threshold))
 
-	if num_participant_stories > 2 and session_timing > 20:
+		if get_all_participants:
+			figName = f"all_maps/global_avg"
+			a, num_participant_stories = combine_n_convert(trial_df, participant_ids, int(story_threshold))
+
+
+	if session_timing > 20:
 		#viz_individual_stories(trial_df, participant_ids, num_participant_stories)
+
 		if group_by_participants:
-			title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) + " age : " + str(age_range) + " sex: " + str(gender)
+			title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) #+ " age : " + str(age_range) + " sex: " + str(gender)
 			viz(a, title_str, figName, 0, 1)
 		if group_by_stories:
 			viz(a, "num participants: " + str(num_participants), figName, 0, 1)
