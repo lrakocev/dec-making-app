@@ -14,7 +14,10 @@ import copy
 from scipy import stats
 import time
 import sys
+import os
 import math
+from sklearn import preprocessing
+import scipy
 
 ###############
 # syncing prefs across trials
@@ -27,7 +30,7 @@ def get_meta_data(trial_table, col_name):
 def get_total_time(trial_table):
 	# the total time it took for participant to complete all their trials
 
-	return trial_table['trial_elapsed'].apply(lambda x: float(x)).sum()
+	return trial_table['trial_elapsed'].apply(lambda x: float(x.split(":")[-1])).sum()
 
 def get_total_stories(trial_table, participant_id):
 
@@ -43,6 +46,7 @@ def get_prefs(trial_table, story_num, participant_id):
 
 	trial_table = trial_table[(trial_table['tasktypedone'] == str(story_num)) & (trial_table['subjectidnumber'] == str(participant_id))]
 
+	'''
 	trial_date = trial_table['trial_start'].iloc[1].strip()
 	if len(trial_date) == 1:
 		trial_date = "Mon May 22 00:00:00 1998"
@@ -52,17 +56,18 @@ def get_prefs(trial_table, story_num, participant_id):
 	## date of the switch = june 8, 2023
 	time_tup = (2023,6,8,0,0,0,3,159,-1)
 	switch_date = time.mktime(time_tup)
+	'''
 
 	reward_prefs = ast.literal_eval(trial_table['reward_prefs'].iloc[0])
 	cost_prefs = ast.literal_eval(trial_table['cost_prefs'].iloc[0])
 
-	return reward_prefs, cost_prefs, trial_date < switch_date
+	return reward_prefs, cost_prefs, 0 #trial_date < switch_date
 
 def get_story_order(trial_table, participant_id):
 
-	trial_table = trial_table[trial_table['subjectidnumber']==str(participant_id)]
+	trial_table = trial_table[trial_table['subjectidnumber']==participant_id]
 
-	return ast.literal_eval(trial_table['task_order'].iloc[0])
+	return ast.literal_eval(trial_table['story_order'].iloc[-1])
 
 def get_story_prefs(trial_table, participant_id):
 
@@ -163,76 +168,32 @@ def sync_trials(trial_table, story_num, participant_id):
 # getting data
 ###############
 
-def combine_normalize_rescale(trial_table, participant_ids, story_threshold):
-
+def combine_n_zscore(trial_table, desired_story_type, participant_ids, story_threshold):
+	## does a PDF normalization
+	## splits by the story sub-type : moral, probability, approach avoid, social
 	final_vals = Counter()
 	tot_stories = 0
 	for participant_id in participant_ids:
-		story_prefs = get_story_prefs(trial_table,participant_id)
 		story_order = get_story_order(trial_table,participant_id)
 
 		n_stories = get_total_stories(trial_table, participant_id)
-
 		for i in range(0,n_stories):
+
 			story_num = story_order[i]
-			
-			story_score = int(story_prefs[str(story_num)]) if story_prefs else 50
+			story_type = story_num.split("/")[1]
+			if story_type == desired_story_type:
 
-			try:
-				d = sync_trials(trial_table, story_num, participant_id)
-
-				tot_vals = sum([v for k, v in d.items()])
+				d = sync_trials(trial_table,story_num, participant_id)
 				tot_qs = len(d)
-
-				per_q = tot_vals / tot_qs
-
-				scaled = {k:(v*story_score) for k,v in d.items()}
-				renorm = {k: v/per_q for k,v in scaled.items()}
-
+				tot_vals = sum([v for k, v in d.items()])
+				mean_q = tot_vals / tot_qs
+				std_dev = np.std([v for k,v in d.items()])
+				renorm = {k: (v-mean_q)/std_dev for k,v in d.items()}
 				tot_stories += 1
+
 				final_vals += Counter(renorm)
-			except:
-				continue
-
-	## play with the normalization here 
-	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100) for (k,v) in final_vals.items()}
-
-	final_vals_fix = {}
-	for i in range(0,4):
-		for j in range(0,4):
-			if (i,j) in final_vals.keys():
-				final_vals_fix[(i,j)] = final_vals[(i,j)]
 			else:
-				final_vals_fix[(i,j)] = 0.5
-
-	row, col, fill = zip(*[(*k, v) for k, v in final_vals_fix.items()])
-	result = coo_matrix((fill, (col, row)), shape=(4, 4)).toarray()
-
-	return result, tot_stories
-
-def combine_n_normalize(trial_table, participant_ids, story_threshold):
-
-	final_vals = Counter()
-	tot_stories = 0
-	for participant_id in participant_ids:
-		story_order = get_story_order(trial_table,participant_id)
-
-		n_stories = get_total_stories(trial_table, participant_id)
-		for i in range(0,n_stories):
-			story_num = story_order[i]
-
-			d = sync_trials(trial_table,story_num, participant_id)
-			tot_qs = len(d)
-
-			tot_vals = sum([v for k, v in d.items()])
-			per_q = tot_vals / tot_qs
-
-			renorm = {k: v/per_q for k,v in d.items()}
-
-			tot_stories += 1
-			final_vals += Counter(renorm)
-
-		## play with the normalization here 
+				continue
 
 	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories) for (k,v) in final_vals.items()}
 
@@ -249,30 +210,109 @@ def combine_n_normalize(trial_table, participant_ids, story_threshold):
 
 	return result, tot_stories
 
-def combine_n_scale(trial_table, participant_ids, story_threshold):
 
+def combine_n_convert_new_tasks(trial_table, desired_story_type, participant_ids, story_threshold):
+	## does a PDF normalization
+	## splits by the story sub-type : moral, probability, approach avoid, social
 	final_vals = Counter()
 	tot_stories = 0
 	for participant_id in participant_ids:
 		story_order = get_story_order(trial_table,participant_id)
-		story_prefs = get_story_prefs(trial_table,participant_id)
+
+		n_stories = get_total_stories(trial_table, participant_id)
+		for i in range(0,n_stories):
+
+			story_num = story_order[i]
+			story_type = story_num.split("/")[1]
+			if story_type == desired_story_type:
+				final_vals += Counter(sync_trials(trial_table,story_num, participant_id))
+				tot_stories +=1 
+			else:
+				continue
+
+	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100) for (k,v) in final_vals.items()}
+
+	final_vals_fix = {}
+	for i in range(0,4):
+		for j in range(0,4):
+			if (i,j) in final_vals.keys():
+				final_vals_fix[(i,j)] = final_vals[(i,j)]
+			else:
+				final_vals_fix[(i,j)] = 0.5
+
+	row, col, fill = zip(*[(*k, v) for k, v in final_vals_fix.items()])
+	result = coo_matrix((fill, (col, row)), shape=(4, 4)).toarray()
+
+	return result, tot_stories
+
+def combine_n_normalize_new_tasks(trial_table, desired_story_type, participant_ids, story_threshold):
+	## does a PDF normalization
+	## splits by the story sub-type : moral, probability, approach avoid, social
+	final_vals = Counter()
+	tot_stories = 0
+	for participant_id in participant_ids:
+		story_order = get_story_order(trial_table,participant_id)
+
+		n_stories = get_total_stories(trial_table, participant_id)
+		for i in range(0,n_stories):
+
+			story_num = story_order[i]
+			story_type = story_num.split("/")[1]
+			if story_type == desired_story_type:
+
+				d = sync_trials(trial_table,story_num, participant_id)
+				tot_qs = len(d)
+				tot_vals = sum([v for k, v in d.items()])
+				per_q = tot_vals / tot_qs
+				renorm = {k: v/per_q for k,v in d.items()}
+				tot_stories += 1
+
+				final_vals += Counter(renorm)
+			else:
+				continue
+
+	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories) for (k,v) in final_vals.items()}
+
+	final_vals_fix = {}
+	for i in range(0,4):
+		for j in range(0,4):
+			if (i,j) in final_vals.keys():
+				final_vals_fix[(i,j)] = final_vals[(i,j)]
+			else:
+				final_vals_fix[(i,j)] = 0.5
+
+	row, col, fill = zip(*[(*k, v) for k, v in final_vals_fix.items()])
+	result = coo_matrix((fill, (col, row)), shape=(4, 4)).toarray()
+
+	return result, tot_stories
+
+def combine_n_normalize(trial_table, participant_ids, story_threshold):
+	# init version with no splitting 
+	# PDF "normalization"
+	final_vals = Counter()
+	tot_stories = 0
+	for participant_id in participant_ids:
+		story_order = get_story_order(trial_table,participant_id)
 
 		n_stories = get_total_stories(trial_table, participant_id)
 
+		#tot_stories += n_stories
 		for i in range(0,n_stories):
-			story_num = story_order[i]
-			
-			story_score = int(story_prefs[str(story_num)]) if story_prefs else 50
+			try:
+				story_num = story_order[i]
 
-			d = sync_trials(trial_table,story_num, participant_id)
-			scaled = {k:(v*story_score) for k,v in d.items()}
+				d = sync_trials(trial_table,story_num, participant_id)
+				tot_qs = len(d)
+				tot_vals = sum([v for k, v in d.items()])
+				per_q = tot_vals / tot_qs
+				renorm = {k: v/per_q for k,v in d.items()}
 
-			tot_stories += 1
-			final_vals += Counter(scaled)
+				tot_stories += 1
+				final_vals += Counter(renorm)
+			except:
+					continue
 
-	## play with the normalization here 
-
-	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100*100) for (k,v) in final_vals.items()}
+	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories) for (k,v) in final_vals.items()}
 
 	final_vals_fix = {}
 	for i in range(0,4):
@@ -288,36 +328,24 @@ def combine_n_scale(trial_table, participant_ids, story_threshold):
 	return result, tot_stories
 
 def combine_n_convert(trial_table, participant_ids, story_threshold):
-
+	# OG -- no added calcs, just combining raw
 	final_vals = Counter()
-	pref_stories = 0
-
+	tot_stories = 0
 	for participant_id in participant_ids:
 		story_order = get_story_order(trial_table, participant_id)
 		story_prefs = get_story_prefs(trial_table, participant_id)
 
 		n_stories = get_total_stories(trial_table, participant_id)
-
 		for i in range(0,n_stories):
 			try:
-
 				story_num = story_order[i]
-
-				try:
-					story_score = int(story_prefs[str(story_num)])
-				except:
-					story_score = 50
-
-				if story_score > int(story_threshold):
-					pref_stories +=1
-				
-
 				final_vals += Counter(sync_trials(trial_table,story_num, participant_id))
+				tot_stories +=1 
 			except:
 				continue	
 		## play with the normalization here 
 
-	final_vals = {(k[0]-1, k[1]-1):v/(pref_stories*100) for (k,v) in final_vals.items()}
+	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100) for (k,v) in final_vals.items()}
 
 	final_vals_fix = {}
 	for i in range(0,4):
@@ -411,39 +439,40 @@ def viz(data, title, figName, vmin, vmax):
 	ax.set_xlabel('reward')
 	ax.set_ylabel('cost')
 	ax.set_title(title)
-	fig.savefig(figName,format="pdf",)
+	fig.savefig(figName)
 
 
 if __name__ == "__main__":
 
+	desired_story_type = 'probability'
 	group_by_stories = False
 	group_by_participants = True
 	get_all_participants = False
-
-	new_combined = True
-	re_normalized_combined = False
-	scaled_by_relevance_combined = False
-	scaled_normalized_combined = False
-
-	num_participant_stories = 5
-	session_timing = 25
+	new_tasks = True
 
 	conn = psycopg2.connect(database='live_database', host='10.10.21.128', user='postgres', port='5432', password='1234')
 	trial_cursor = conn.cursor()
 
-	if group_by_participants:
+	if group_by_stories:
+		tasktypedone = sys.argv[1].strip().split("Git")[1]
+		tasktypedone_str = tasktypedone.replace("/","_")
+		pathname = f"all_maps/new_task_maps/by_story/"
+		if not os.path.exists(pathname):
+			os.makedirs(pathname)
+		figName = f"all_maps/new_task_maps/by_story/{tasktypedone_str}"
+		qry = f"SELECT subjectidnumber,pain,tired,hunger,age,sex,story_order,tasktypedone,reward_prefs,cost_prefs,cost_level,reward_level,decision_made,trial_index,trial_start,trial_end,trial_elapsed,story_prefs FROM public.human_dec_making_table_utep where tasktypedone='{tasktypedone}'" 
 
+
+	if group_by_participants:
 		if get_all_participants:
-			first_pass = "select subjectidnumber from human_dec_making_table group by subjectidnumber having count(distinct tasktypedone) > 7"
+			first_pass = "select distinct(subjectidnumber) from human_dec_making_table_utep "
 
 			trial_cursor.execute(first_pass)
 			participant_ids = trial_cursor.fetchall()
 			participant_ids = [i[0] for i in participant_ids]
 
 		else:
-
 			participant_id = sys.argv[1].rstrip()
-
 			ids = pd.read_excel('ids.xlsx')
 			id_dict = ids.set_index('ID').T.to_dict('list')
 
@@ -452,31 +481,24 @@ if __name__ == "__main__":
 			    id_dict[k] = [str(int(x)) for x in v if not math.isnan(x)]
 
 			int_id = int(participant_id)
+			participant_ids = [participant_id]
 			## all the keys of id dict are "primary ids", so if it looks for a secondary (or tertiary id) it'll fail - 
 			## which is good bc that data will already be included in the primary id map
 			if int_id in id_dict:
-				participant_ids = id_dict[int_id]
+				participant_ids += id_dict[int_id]
 		
 		insert = "('" + "','".join(participant_ids) + "')"
 
-		good_stories = ['3', '6', '14', '15', '16', '21', '22']
-		story_insert = "('" + "','".join(good_stories) + "')"
+		stories_to_include = []
+		story_insert  = "('" + "','".join(stories) + "')"
 
-		qry = f"SELECT * FROM public.human_dec_making_table where subjectidnumber in {insert}" #" and tasktypedone in {story_insert}" 
-
-	if group_by_stories:
-		tasktypedone = sys.argv[1].strip()
-		figName = f"all_maps/by_story/grouped_by_story_maps/{tasktypedone}"
-		qry = f"SELECT * FROM public.human_dec_making_table where tasktypedone='{tasktypedone}'" 
-
-
-	story_threshold = sys.argv[2]
+		qry = f"SELECT subjectidnumber,pain,tired,hunger,age,sex,story_order,tasktypedone,reward_prefs,cost_prefs,cost_level,reward_level,decision_made,trial_index,trial_start,trial_end,trial_elapsed,story_prefs FROM public.human_dec_making_table_utep where subjectidnumber in {insert} and tasktypedone in {story_insert}"
 
 	trial_cursor.execute(qry)
 	trial_table = trial_cursor.fetchall()
 
 	trial_df = pd.DataFrame(trial_table)
-	trial_df.columns = ['subjectidnumber', 'in_pain', 'tired', 'hungry', 'age_range', 'gender', 'chosen_tasks','task_order','tasktypedone', 'reward_prefs','cost_prefs','cost_level','reward_level', 'decision_made','trial_index','trial_start','trial_end','trial_elapsed','story_prefs']
+	trial_df.columns = ['subjectidnumber', 'in_pain', 'tired', 'hungry', 'age_range', 'gender','story_order','tasktypedone', 'reward_prefs','cost_prefs','cost_level','reward_level', 'decision_made','trial_index','trial_start','trial_end','trial_elapsed','story_prefs']
 
 	if group_by_stories:
 		num_participants = get_total_participants_for_story(trial_table)
@@ -484,33 +506,69 @@ if __name__ == "__main__":
 		a = combine_n_convert_group_by_stories(trial_df, unique_ids, tasktypedone)
 
 	if group_by_participants:
+
 		age_range = get_meta_data(trial_df, 'age_range')
 		session_timing = get_total_time(trial_df)
 		gender = get_meta_data(trial_df, 'gender')
 
-		if re_normalized_combined:
-			figName = f"all_maps/combined/new_combined_maps/{participant_id}"
-			a, num_participant_stories = combine_n_normalize(trial_df, participant_ids, int(story_threshold))
-		if scaled_by_relevance_combined:
-			figName = f"all_maps/combined/scaled_by_relevance_combined_maps/{participant_id}"
-			a, num_participant_stories = combine_n_scale(trial_df, participant_ids, int(story_threshold))
-		if scaled_normalized_combined:
-			figName = f"all_maps/combined/scaled_normalized_combined_maps/{participant_id}"
-			a, num_participant_stories = combine_normalize_rescale(trial_df, participant_ids, int(story_threshold))
-		if new_combined:
-			figName = f"all_maps/combined/pdfs/{participant_id}"
-			a, num_participant_stories = combine_n_convert(trial_df, participant_ids, int(story_threshold))
-
 		if get_all_participants:
-			figName = f"all_maps/global_avg"
-			a, num_participant_stories = combine_n_convert(trial_df, participant_ids, int(story_threshold))
+			figName = f"all_maps/global_avg.pdf"
+			a, num_participant_stories = combine_n_normalize(trial_df, participant_ids,0)
 
+		if new_tasks:
+			#################
+			# raw
+			##################
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/raw"
+			if not os.path.exists(pathname):
+				os.makedirs(pathname)
+			figName_raw = f"all_maps/new_task_maps/{desired_story_type}/raw/{participant_id}"
+			a_raw, num_participant_stories = combine_n_convert_new_tasks(trial_df, desired_story_type, participant_ids, 0)
 
-	if session_timing > 20:
-		#viz_individual_stories(trial_df, participant_ids, num_participant_stories)
+			#################
+			# z-score
+			##################
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/zscore"
+			if not os.path.exists(pathname):
+				os.makedirs(pathname)
+			figName_zscore= f"all_maps/new_task_maps/{desired_story_type}/zscore/{participant_id}"
+			a_zscore = scipy.stats.zscore(np.array(a_raw))
 
-		if group_by_participants:
-			title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) #+ " age : " + str(age_range) + " sex: " + str(gender)
-			viz(a, title_str, figName, 0, 1)
-		if group_by_stories:
-			viz(a, "num participants: " + str(num_participants), figName, 0, 1)
+			#################
+			# avg z-score
+			##################
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/avg_zscore"
+			if not os.path.exists(pathname):
+				os.makedirs(pathname)
+			figName_avg_zscore= f"all_maps/new_task_maps/{desired_story_type}/avg_zscore/{participant_id}"
+			a_avg_zscore, num_participant_stories = combine_n_zscore(trial_df, desired_story_type, participant_ids, 0)
+
+			#################
+			# minimax
+			##################
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/minimax"
+			if not os.path.exists(pathname):
+				os.makedirs(pathname)
+			figName_minimax = f"all_maps/new_task_maps/{desired_story_type}/minimax/{participant_id}"
+			scaler = preprocessing.MinMaxScaler()
+			a_minmax = scaler.fit_transform(a_raw)
+
+			#################
+			# pdf
+			##################
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/pdf"
+			if not os.path.exists(pathname):
+				os.makedirs(pathname)
+			figName_pdf = f"all_maps/new_task_maps/{desired_story_type}/pdf/{participant_id}"
+			a_pdf, num_participant_stories = combine_n_normalize_new_tasks(trial_df, desired_story_type, participant_ids, 0)
+
+	if group_by_participants:
+		title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) #+ " age : " + str(age_range) + " sex: " + str(gender)
+		viz(a_pdf, title_str, figName_pdf, 0, 1)
+		viz(a_raw, title_str, figName_raw, 0, 1)
+		viz(a_avg_zscore, title_str, figName_avg_zscore, 0, 1)
+		viz(a_zscore, title_str, figName_zscore, 0, 1)
+		viz(a_minmax, title_str, figName_minimax, 0, 1)
+
+	if group_by_stories:
+		viz(a, "num participants: " + str(num_participants), figName, 0, 1)

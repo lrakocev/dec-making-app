@@ -1,5 +1,5 @@
 #!/bin/sh -x
-for i in {1..22}; 
-do
-	python create_map.py $i 0
-done
+while read -r line; do
+	echo "$line"
+	python create_map.py $line 0
+done < <(python grab_stories.py)
