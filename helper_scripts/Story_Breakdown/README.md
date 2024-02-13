@@ -56,3 +56,33 @@ RUNNING THE SCRIPT:
 8. In the DM app folder, navigate to '/stories/task_types/'. Place the contents of
 	'/output/' in here.
 9. You're done! You just did several hours of work in just a few seconds!
+
+# verify_files.py README
+-----------------------------------------------------------------------------------
+Once all stories are broken down, it is recommended to run them through verify_files.
+This script will attempt to process the text files as the main app would, but it will
+note any errors and problems it finds and will display them on the command line.
+
+Running verify_output.bat will automatically verify the integrity of all files in the
+'output' directory. Warnings and errors will be displayed, along with an indication of
+where the error was found on the file.
+
+One must *manually* fix the issues afterward.
+
+RUNNING THE SCRIPT MANUALLY:
+The script accepts four (4) arguments...
+1. root: The root directory/folder where story data to be checked is stored. This can
+	either be 'output' for the output folder, or 'stories' for the main stories
+	folder.
+2. -t, --task: Task type directory/folder to analyse. If set, the program will restrict
+	itself to only the specified task type. Please only choose one of the following:
+	['approach_avoid', 'benefit_benefit', 'cost_cost', 'moral', 'multi_choice', 'probability', 'social']
+3. -s, --story: Story directory/folder to analyse. If set, the program will restrict
+	itself to only the specified task type. Only enter an integer number.
+4. -f, --file: File to restrict analysis to.
+	Choices are ['questions', 'pref_cost', 'pref_reward', 'context']
+
+Running the script indicating only the 'root' argument result in a verification of
+*all* files in the indicated root folder. One can restrict this to a specific file
+by providing the remaining three optional arguments. However, all three must be
+provided.
