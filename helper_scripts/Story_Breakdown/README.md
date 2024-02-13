@@ -70,6 +70,7 @@ where the error was found on the file.
 One must *manually* fix the issues afterward.
 
 RUNNING THE SCRIPT MANUALLY:
+
 The script accepts four (4) arguments...
 1. root: The root directory/folder where story data to be checked is stored. This can
 	either be 'output' for the output folder, or 'stories' for the main stories
