@@ -1287,7 +1287,7 @@ def rank_prefs(cost_or_reward):
     txt = open(path).read()
     
     options = txt.split("\n")
-    options = [options.strip() for line in options if (line != '' and line != ' ')]
+    options = [line.strip() for line in options if (line != '' and line != ' ')]
     opt_dict = {}
     for option in options:
         if option != '':
