@@ -26,6 +26,8 @@ import os
 from scipy.signal import argrelextrema, find_peaks
 from numpy.polynomial import Polynomial as P
 from numpy.polynomial import Chebyshev as T
+from scipy.signal import savgol_filter
+import math
 
 ################################
 ##
@@ -33,13 +35,16 @@ from numpy.polynomial import Chebyshev as T
 ##
 ################################
 
-# TODO: this function is currently how i'm modifying the length of the reading box
-# this is sort of hack-y so there's definitely a better way to do this
 def get_added_q_len(x_coords):
 
+	'''
 	grad_x = np.gradient(x_coords)
 	max_is = [i for i in range(round(.75*len(grad_x))) if grad_x[i] < -15]
 	added_q_len = max(len(max_is)-1, 0)
+	'''
+	order = 50
+	maxes, mins, _ = get_local_extrema(x_coords, order)
+	added_q_len = (len(maxes) - 3)
 
 	return added_q_len
 
@@ -47,7 +52,7 @@ def get_reading_box(min_x, max_y, added_q_len = 0):
 	return (-5, max_y, 97, 12+added_q_len)
 
 def get_reaction_box(min_x, max_y, added_q_len = 0):
-	return (35, max_y-added_q_len-14, 20, 7)
+	return (35, max_y-added_q_len-13, 20, 7)
 
 def get_dec_box(min_x, max_y, added_q_len = 0):
 	return (40, max_y-added_q_len-21, 10, 15) 
@@ -67,9 +72,6 @@ def rect_contains(rect, pt):
 	return logic
 
 def gaze_in_box(x_coords, y_coords, added_q_len=0):
-
-	print("xcoords", x_coords)
-	print("ycoords", y_coords)
 
 	gaze_list = zip(x_coords, y_coords)
 
@@ -127,19 +129,6 @@ def line_up_data(gaze_df, eye):
 
 	return x_coords, y_coords, pupil_list
 
-# this function isn't used anywhere
-def rolling_window_avgs(y_coords, w_size = 5):
-
-	velocities = np.gradient(y_coords)
-
-	avg_velocities = []
-	for i in range(len(velocities) - w_size + 1):
-		window = velocities[i:i+w_size]
-		avg_vel = np.mean(window)
-		avg_velocities.append(avg_vel)
-
-	return avg_velocities
-
 ################################
 ##
 ## plotting
@@ -158,7 +147,10 @@ def plot_data(x_coords, y_coords, pupil_list, colors, end_read, max_y, min_x, ad
 
 	x = [i for i in range(len(x_coords))]
 
-	e_drops, poly_y = get_engagement_drops(pupil_list)
+	order = min(round(len(pupil_list) / 10), 100)
+	maxes, mins, poly_y = get_local_extrema(pupil_list, order)
+
+	ups, dips = segments(pupil_list, order, .1)
 
 	plt.figure()
 	ax1 = plt.subplot(211)
@@ -167,29 +159,32 @@ def plot_data(x_coords, y_coords, pupil_list, colors, end_read, max_y, min_x, ad
 	ax1.add_patch(read_rect)
 	ax1.add_patch(dec_rect)
 	ax1.add_patch(submit_rect)
-
 	plt.subplot(212)
-	plt.title('pupil diameter')
+	plt.title('ups: ' + str(ups) + "dips: " + str(dips))
 	plt.scatter(x,pupil_list,c=colors)
 	plt.plot(pupil_list)
 	plt.plot(poly_y)
-	for i in e_drops:
-		plt.plot((i,i), (min(pupil_list), max(pupil_list)),'k')
-	plt.plot((end_read, end_read), (min(pupil_list), max(pupil_list)), 'm')
+	for i in maxes:
+		plt.plot((i,i), (min(pupil_list), max(pupil_list)),'m')
+	for i in mins:
+		plt.plot((i,i), (min(pupil_list), max(pupil_list)), 'c')
+	plt.plot((end_read, end_read), (min(pupil_list), max(pupil_list)), 'k')
+	
 
-def post_reading_data(x_coords, y_coords, pupil_list, added_q_len=0):
+def post_reading_data(x_coords, y_coords, pupil_list, added_q_len):
 
 	colors = gaze_in_box(x_coords, y_coords, added_q_len)
 	end_read = get_end_reading(x_coords, y_coords, added_q_len)
 	return x_coords[end_read:], y_coords[end_read:],pupil_list[end_read:], colors[end_read:]
 
-def plot_init(gaze_df, eye, added_q_len=0):
+def plot_init(gaze_df, eye):
 
 	x_coords, y_coords, pupil_list = line_up_data(gaze_df, eye)
-
+	added_q_len = get_added_q_len(x_coords)
 	colors = gaze_in_box(x_coords, y_coords, added_q_len)
 	end_read = get_end_reading(x_coords, y_coords, added_q_len)
-	max_y = np.mean(sorted(y_coords)[-20:]) 
+	avg_of = min(50, len(y_coords))
+	max_y = np.mean(sorted(y_coords)[-avg_of:]) 
 	min_x = min(x_coords)
 
 	plot_data(x_coords, y_coords, pupil_list, colors, end_read, max_y, min_x, added_q_len)
@@ -220,6 +215,9 @@ def two_eyes(gaze_df):
 	right_x = [pt[0] for pt in right]
 	right_y = [-pt[1] for pt in right]
 
+	order = 50
+	maxes, mins, _ = get_local_extrema(left_x, order)
+
 	x_cov = np.cov((left_x, right_x))
 	y_cov = np.cov((left_y, right_y))
 
@@ -230,6 +228,12 @@ def two_eyes(gaze_df):
 	plt.subplot(412)
 	plt.plot(left_x, 'b')
 	plt.plot(right_x, 'r')
+	for i in maxes:
+		if i > 20 :
+			plt.plot((i,i), (min(left_x), max(left_x)),'c')
+	for i in mins:
+		if i > 20 :
+			plt.plot((i,i), (min(left_x), max(left_x)),'m')
 	plt.title('x cov: ' + str(round(x_cov[0][1], 4)))
 	plt.subplot(413)
 	plt.plot(left_y, 'b')
@@ -266,24 +270,63 @@ def get_end_reading(x_coords, y_coords, added_q_len):
 def get_decision_timing(x_coords, y_coords, added_q_len):
 
 	end_of_reading = get_end_reading(x_coords, y_coords, added_q_len)
+
 	total_length = len(x_coords)
 
-	return total_length - end_of_reading
+	return total_length - end_of_reading if end_of_reading != None else None
 
-# TODO: i'm using polyfit as a way to smooth the engagement data, but there's definitely a better function for it
-def get_engagement_drops(pupil_list):
+def get_local_extrema(l, order):
 
-	x = [i for i in range(0,len(pupil_list))]
+	x = [i for i in range(0,len(l))]
 
-	pupil_list_poly = np.polyfit(x, pupil_list, 100)
-	poly_y =  np.poly1d(pupil_list_poly)(x)
-	max_ys = argrelextrema(poly_y, np.greater)
+	w = min(20, len(x))
+	smoothed_y = savgol_filter(l, window_length = w, polyorder = 3)
+	max_ys = argrelextrema(smoothed_y, np.greater, order = order)
+	min_ys = argrelextrema(smoothed_y, np.less, order = order)
+	
+	return max_ys[0], min_ys[0], smoothed_y
 
-	return max_ys[0], poly_y
+def avg_engagement(pupil_list):
 
-def eye_on_targets(x_coords, y_coords, added_q_len=0):
+	return np.mean(pupil_list)
 
-	eye_placement = gaze_in_box(x_coords, y_coords, added_q_len=0)
+def eng_near_dec(end_of_reading, pupil_list):
+
+	window = min(len(pupil_list)/10, 30)
+	w = round(window/2)
+
+	if not math.isnan(end_of_reading):
+		end_of_reading = int(end_of_reading)
+		beginning_window = min(end_of_reading - w, 0)
+		end_window = min(end_of_reading + w, len(pupil_list))
+		
+		eng_in_window = pupil_list[beginning_window:end_window]
+
+		eng_before = pupil_list[beginning_window:end_of_reading]
+		eng_after = pupil_list[end_of_reading:end_window]
+
+		return np.mean(eng_before), np.mean(eng_in_window), np.mean(eng_after)
+	return None, None, None
+
+
+def segments(l, order, thresh):
+	## get biggest / fastest drops between consecutive max/misn
+	
+	max_is, min_is, smoothed_l = get_local_extrema(l, order)
+
+	extrema_is = sorted(list(max_is) + list(min_is))
+	extrema_vals = [smoothed_l[i] for i in extrema_is]
+	extrema_diffs = np.diff(extrema_vals)
+
+	#big_diffs = [i for i in extrema_diffs if i > two_devs_above]
+	big_ups = [extrema_is[i] for i in range(len(extrema_is)-1) if extrema_diffs[i] > thresh]
+	big_dips = [extrema_is[i] for i in range(len(extrema_is)-1) if extrema_diffs[i] < -thresh]
+
+	return big_ups, big_dips
+
+def eye_on_targets(x_coords, y_coords, added_q_len):
+
+	eye_placement = gaze_in_box(x_coords, y_coords, added_q_len)
 
 	on_dec_box = [i for i in range(len(eye_placement)) if eye_placement[i] == 'g']
 	on_submit_box = [i for i in range(len(eye_placement)) if eye_placement[i] == 'y']
@@ -298,13 +341,15 @@ def get_reaction_time(x_coords, y_coords, added_q_len):
 
 	on_dec_box, on_submit_box = eye_on_targets(x_coords, y_coords, added_q_len)
 
-	first_on_dec_box = [i for i in on_dec_box if i >= end_read]
-	first_on_submit_box = [i for i in on_submit_box if i >= end_read]
+	if end_read != None:
+		first_on_dec_box = [i for i in on_dec_box if i >= end_read]
+		first_on_submit_box = [i for i in on_submit_box if i >= end_read] 
 
-	btwn_read_n_decide = first_on_dec_box[0] - end_read
-	btwn_read_n_submit = first_on_submit_box[0] - end_read
+		btwn_read_n_decide = first_on_dec_box[0] - end_read
+		btwn_read_n_submit = first_on_submit_box[0] - end_read
 
-	return btwn_read_n_decide, btwn_read_n_submit
+		return btwn_read_n_decide, btwn_read_n_submit
+	return None, None
 
 
 ################################
@@ -331,8 +376,8 @@ def convert_gaze_data_to_df(trial_df, r, c):
 	gaze_df = gaze_df[(gaze_df['left_gaze_point_validity'] == 1) & (gaze_df['right_gaze_point_validity']  == 1)]
 	gaze_df = gaze_df[(gaze_df['left_pupil_validity'] == 1) & (gaze_df['right_pupil_validity']  == 1)]
 
-	gaze_df['left_x_coords'] = gaze_df['left_gaze_point_on_display_area'].apply(lambda x: x[0])
-	gaze_df['left_y_coords'] = gaze_df['left_gaze_point_on_display_area'].apply(lambda x: x[1])
+	gaze_df['left_x_coords'] = gaze_df['left_gaze_point_on_display_area'].apply(lambda x: 100*x[0])
+	gaze_df['left_y_coords'] = gaze_df['left_gaze_point_on_display_area'].apply(lambda x: 100*x[1])
 
 	gaze_df['real_r'] = r
 	gaze_df['real_c'] = c
@@ -359,66 +404,84 @@ if __name__ == "__main__":
 
 	participant_id = sys.argv[1].rstrip()
 	tasktypedone= sys.argv[2].rstrip()
-	init_or_dec = sys.argv[3].rstrip()
-	eye = "left"
+	tasktypedone = tasktypedone.split("Git")[1]
 
+	eye = "left"
+	init_or_dec = "init"
 	checking_eyes = False
 
-	conn = psycopg2.connect(database='live_database', host='10.10.21.128', user='postgres', port='5432', password='1234')
+	conn = psycopg2.connect(database='live_database', host='129.108.49.137', user='postgres', port='5432', password='1234')
 	trial_cursor = conn.cursor()
 
-	qry = f"SELECT tasktypedone,reward_prefs,cost_prefs,reward_level,cost_level,decision_made,eye_tracker_data from human_dec_making_table_utep where subjectidnumber = '{participant_id}' and tasktypedone='{tasktypedone}'"
+	qry = f"SELECT subjectidnumber,tasktypedone,reward_prefs,cost_prefs,reward_level,cost_level,decision_made,eye_tracker_data from human_dec_making_table_utep where subjectidnumber = '{participant_id}' and tasktypedone = '{tasktypedone}'"
 
 	trial_cursor.execute(qry)
 	trial_table = trial_cursor.fetchall()
 	trial_df = pd.DataFrame(trial_table)
-	trial_df.columns = ['tasktypedone','reward_prefs','cost_prefs','reward_level','cost_level','decision_made','eye_tracker_data']
+
+	trial_df.columns = ['subjectidnumber','tasktypedone','reward_prefs','cost_prefs','reward_level','cost_level','decision_made','eye_tracker_data']
 
 	trial_df = trial_df[(trial_df['reward_level'] != '7') & (trial_df['cost_level'] != '7')]
+	trial_df = trial_df[(trial_df['reward_level'] != '0') & (trial_df['cost_level'] != '0')]
 
 	trial_df['real_r'] = trial_df.apply(lambda x: real_rc(x['reward_level'],x['reward_prefs']), axis=1)
 	trial_df['real_c'] = trial_df.apply(lambda x: real_rc(x['cost_level'],x['cost_prefs']), axis=1)
-	
-	dfs = [trial_df]
-	for r in range(1, 2): #5):
-		for c in range(1,2):#5):
+
+	dfs = []
+
+	for r in range(1, 5):
+		for c in range(1,5):
 			task = "_".join(tasktypedone.split("/"))
 			tasktype = tasktypedone.split("/")[1]
 			gaze_df = convert_gaze_data_to_df(trial_df, r, c)
-			dfs.append(gaze_df)
+			append_df = pd.DataFrame(columns=['left_x_coords', 'left_y_coords', 'left_pupil_diameter', 'real_r','real_c'])
+			x_coords, y_coords, pupil_list = line_up_data(gaze_df, 'left')
+			append_df.at[1, 'left_x_coords'] = x_coords
+			append_df.at[1,'left_y_coords']  = y_coords
+			append_df.at[1,'left_pupil_diameter']  = pupil_list
+			append_df.at[1,'real_r'] = gaze_df['real_r'].iloc[0]
+			append_df.at[1,'real_c'] = gaze_df['real_c'].iloc[0]
 
+			dfs.append(append_df)
+			
 			if checking_eyes:
 				two_eyes(gaze_df)
 				pathname = f"eyetracking_maps/{participant_id}/eye_comparison/{task}"
 				if not os.path.exists(pathname):
 					os.makedirs(pathname)
-				figname = f"{pathname}/{r}_{c}"
+				figname = f"{pathname}/{r}_{c}.pdf"
 				plt.savefig(figname)
 
 			else:
-				if init_or_dec == "init":
-					plot_init(gaze_df, eye)
-				else:
-					plot_dec_period(gaze_df, eye)
+				try:
+					if init_or_dec == "init":
+						plot_init(gaze_df, eye)
+					else:
+						plot_dec_period(gaze_df, eye)
 
-				pathname = f"eyetracking_maps/{participant_id}/single_eye_3/{task}"
-				if not os.path.exists(pathname):
-					os.makedirs(pathname)
-				figname = f"{pathname}/{init_or_dec}_{r}_{c}"
-				plt.savefig(figname)
+					pathname = f"eyetracking_maps/{participant_id}/single_eye/{task}"
+					if not os.path.exists(pathname):
+						os.makedirs(pathname)
+					figname = f"{pathname}/{init_or_dec}_{r}_{c}.pdf"
+					plt.savefig(figname)
+				except:
+					continue
 
-	new_df = pd.concat(dfs,keys=['real_r','real_c'])
-
-	## TODO: create a DF with all of the features easily accessible -- there's a bug i'm too lazy to sort out. 
-	## might be better to pass in the gaze data as it already is (tuples) instead of dividing into x and y coords 
-	## which is done in(convert_gaze_data_to_df)
+	intermed_df = pd.concat(dfs)
+	trial_df = trial_df.drop(['reward_prefs','cost_prefs','reward_level','cost_level','eye_tracker_data'], axis=1)
+	new_df = pd.merge(trial_df, intermed_df, how='outer',on=['real_r','real_c'])
 	
-	'''
 	new_df['added_q_len'] = new_df.apply(lambda x: get_added_q_len(x['left_x_coords']), axis=1)
 	new_df['end_of_reading'] = new_df.apply(lambda x: get_end_reading(x['left_x_coords'], x['left_y_coords'], x['added_q_len']), axis=1)
-	new_df['engagement_drops'] = new_df.apply(lambda x: get_engagement_drops(x['left_pupil_diameter'])[1], axis=1)
+	new_df['order'] = new_df.apply(lambda x: min(round(len(x['left_pupil_diameter']) / 20), 50), axis=1)
+	new_df['num_maxes'] = new_df.apply(lambda x: len(get_local_extrema(x['left_pupil_diameter'], x['order'])[0]), axis=1)
+	new_df['num_mins'] = new_df.apply(lambda x: len(get_local_extrema(x['left_pupil_diameter'], x['order'])[1]), axis=1)
 	new_df['decision_timing'] = new_df.apply(lambda x: get_decision_timing(x['left_x_coords'], x['left_y_coords'], x['added_q_len']), axis=1)
-	new_df['eye_on_slider'] = new_df.apply(lambda x: eye_on_targets(x['left_x_coords'], x['left_y_coords'], x['added_q_len'])[0], axis=1)
-	new_df['eye_on_submit'] = new_df.apply(lambda x: eye_on_targets(x['left_x_coords'], x['left_y_coords'], x['added_q_len'])[1], axis=1)
-	new_df['reaction_time'] = new_df.apply(lambda x: get_reaction_time(x['left_x_coords'], x['left_y_coords'], x['added_q_len'])[1], axis=1)
-	'''
+	new_df['big_ups'] = new_df.apply(lambda x: len(segments(x['left_pupil_diameter'], x['order'],.1)[0]), axis=1)
+	new_df['big_dips'] = new_df.apply(lambda x: len(segments(x['left_pupil_diameter'], x['order'],.1)[1]), axis=1)
+	new_df['avg_eng'] = new_df.apply(lambda x: avg_engagement(x['left_pupil_diameter']), axis=1)
+	new_df['eng_before_dec'] = new_df.apply(lambda x: eng_near_dec(x['end_of_reading'],x['left_pupil_diameter'])[0], axis=1)
+	new_df['eng_around_dec'] = new_df.apply(lambda x: eng_near_dec(x['end_of_reading'],x['left_pupil_diameter'])[1], axis=1)
+	new_df['eng_after_dec'] = new_df.apply(lambda x: eng_near_dec(x['end_of_reading'],x['left_pupil_diameter'])[2], axis=1)
+
+	new_df.to_csv('eye_tracking_0415.csv', mode='a')

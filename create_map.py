@@ -217,18 +217,21 @@ def combine_n_convert_new_tasks(trial_table, desired_story_type, participant_ids
 	final_vals = Counter()
 	tot_stories = 0
 	for participant_id in participant_ids:
-		story_order = get_story_order(trial_table,participant_id)
+		#story_order = get_story_order(trial_table,participant_id)
+		story_order = trial_table.tasktypedone.unique()
 
 		n_stories = get_total_stories(trial_table, participant_id)
 		for i in range(0,n_stories):
 
 			story_num = story_order[i]
+
 			story_type = story_num.split("/")[1]
 			if story_type == desired_story_type:
 				final_vals += Counter(sync_trials(trial_table,story_num, participant_id))
 				tot_stories +=1 
 			else:
 				continue
+
 
 	final_vals = {(k[0]-1, k[1]-1):v/(tot_stories*100) for (k,v) in final_vals.items()}
 
@@ -243,7 +246,11 @@ def combine_n_convert_new_tasks(trial_table, desired_story_type, participant_ids
 	row, col, fill = zip(*[(*k, v) for k, v in final_vals_fix.items()])
 	result = coo_matrix((fill, (col, row)), shape=(4, 4)).toarray()
 
-	return result, tot_stories
+
+	min_result = min(final_vals_fix.values())
+	max_result = max(final_vals_fix.values())
+
+	return result, tot_stories, min_result, max_result
 
 def combine_n_normalize_new_tasks(trial_table, desired_story_type, participant_ids, story_threshold):
 	## does a PDF normalization
@@ -434,7 +441,7 @@ def viz(data, title, figName, vmin, vmax):
 	y = np.arange(1,5)
 	X,Y = np.meshgrid(x,y)
 
-	psm = ax.pcolormesh(X, Y, data, cmap=newcmp, rasterized=True, vmin=vmin, vmax=vmax)
+	psm = ax.pcolormesh(X, Y, data, cmap=newcmp, rasterized=True, vmin=vmin, vmax=vmax, alpha = 1)
 	fig.colorbar(psm, cax = cax)
 	ax.set_xlabel('reward')
 	ax.set_ylabel('cost')
@@ -489,10 +496,13 @@ if __name__ == "__main__":
 		
 		insert = "('" + "','".join(participant_ids) + "')"
 
-		stories_to_include = []
-		story_insert  = "('" + "','".join(stories) + "')"
+		#stories_to_include =  ["/approach_avoid/story_16", "/approach_avoid/story_18", "/approach_avoid/story_19", "/approach_avoid/story_21", "/approach_avoid/story_9", "/moral/story_25", "/moral/story_29","/moral/story_4", "/moral/story_6", "/probability/story_1","/probability/story_16","/probability/story_19","/probability/story_2","/probability/story_23", "/probability/story_24","/probability/story_3","/probability/story_5","/probability/story_7","/probability/story_8", "/social/story_22","/social/story_3","/social/story_4","/social/story_5"]
+		
+		#story_insert  = "('" + "','".join(stories_to_include ) + "')"
 
-		qry = f"SELECT subjectidnumber,pain,tired,hunger,age,sex,story_order,tasktypedone,reward_prefs,cost_prefs,cost_level,reward_level,decision_made,trial_index,trial_start,trial_end,trial_elapsed,story_prefs FROM public.human_dec_making_table_utep where subjectidnumber in {insert} and tasktypedone in {story_insert}"
+		#print("story insert", story_insert)
+
+		qry = f"SELECT subjectidnumber,pain,tired,hunger,age,sex,story_order,tasktypedone,reward_prefs,cost_prefs,cost_level,reward_level,decision_made,trial_index,trial_start,trial_end,trial_elapsed,story_prefs FROM public.human_dec_making_table_utep where subjectidnumber = '{participant_id}'" # and tasktypedone in {story_insert}"
 
 	trial_cursor.execute(qry)
 	trial_table = trial_cursor.fetchall()
@@ -523,52 +533,54 @@ if __name__ == "__main__":
 			if not os.path.exists(pathname):
 				os.makedirs(pathname)
 			figName_raw = f"all_maps/new_task_maps/{desired_story_type}/raw/{participant_id}"
-			a_raw, num_participant_stories = combine_n_convert_new_tasks(trial_df, desired_story_type, participant_ids, 0)
+			a_raw, num_participant_stories, min_a, max_a = combine_n_convert_new_tasks(trial_df, desired_story_type, participant_ids, 0)
 
+			'''
 			#################
 			# z-score
 			##################
-			pathname = f"all_maps/new_task_maps/{desired_story_type}/zscore"
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/good_stories/zscore"
 			if not os.path.exists(pathname):
 				os.makedirs(pathname)
-			figName_zscore= f"all_maps/new_task_maps/{desired_story_type}/zscore/{participant_id}"
+			figName_zscore= f"all_maps/new_task_maps/{desired_story_type}/good_stories/zscore/{participant_id}"
 			a_zscore = scipy.stats.zscore(np.array(a_raw))
 
 			#################
 			# avg z-score
 			##################
-			pathname = f"all_maps/new_task_maps/{desired_story_type}/avg_zscore"
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/good_stories/avg_zscore"
 			if not os.path.exists(pathname):
 				os.makedirs(pathname)
-			figName_avg_zscore= f"all_maps/new_task_maps/{desired_story_type}/avg_zscore/{participant_id}"
+			figName_avg_zscore= f"all_maps/new_task_maps/{desired_story_type}/good_stories/avg_zscore/{participant_id}"
 			a_avg_zscore, num_participant_stories = combine_n_zscore(trial_df, desired_story_type, participant_ids, 0)
 
 			#################
 			# minimax
 			##################
-			pathname = f"all_maps/new_task_maps/{desired_story_type}/minimax"
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/good_stories/minimax"
 			if not os.path.exists(pathname):
 				os.makedirs(pathname)
-			figName_minimax = f"all_maps/new_task_maps/{desired_story_type}/minimax/{participant_id}"
+			figName_minimax = f"all_maps/new_task_maps/{desired_story_type}/good_stories/minimax/{participant_id}"
 			scaler = preprocessing.MinMaxScaler()
 			a_minmax = scaler.fit_transform(a_raw)
 
 			#################
 			# pdf
 			##################
-			pathname = f"all_maps/new_task_maps/{desired_story_type}/pdf"
+			pathname = f"all_maps/new_task_maps/{desired_story_type}/good_stories/pdf"
 			if not os.path.exists(pathname):
 				os.makedirs(pathname)
-			figName_pdf = f"all_maps/new_task_maps/{desired_story_type}/pdf/{participant_id}"
+			figName_pdf = f"all_maps/new_task_maps/{desired_story_type}/good_stories/pdf/{participant_id}"
 			a_pdf, num_participant_stories = combine_n_normalize_new_tasks(trial_df, desired_story_type, participant_ids, 0)
+			'''
 
 	if group_by_participants:
-		title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) #+ " age : " + str(age_range) + " sex: " + str(gender)
-		viz(a_pdf, title_str, figName_pdf, 0, 1)
-		viz(a_raw, title_str, figName_raw, 0, 1)
-		viz(a_avg_zscore, title_str, figName_avg_zscore, 0, 1)
-		viz(a_zscore, title_str, figName_zscore, 0, 1)
-		viz(a_minmax, title_str, figName_minimax, 0, 1)
+		title_str = "stories: " + str(num_participant_stories) + " timing (s): "+ str(session_timing) + " age : " + str(age_range) + " sex: " + str(gender)
+		viz(a_raw, title_str, figName_raw, min_a, max_a)
+		#viz(a_pdf, title_str, figName_pdf, 0, 1)
+		#viz(a_avg_zscore, title_str, figName_avg_zscore, 0, 1)
+		#viz(a_zscore, title_str, figName_zscore, 0, 1)
+		#viz(a_minmax, title_str, figName_minimax, 0, 1)
 
 	if group_by_stories:
 		viz(a, "num participants: " + str(num_participants), figName, 0, 1)
