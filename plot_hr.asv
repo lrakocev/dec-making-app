@@ -1,0 +1,86 @@
+%% ingest + format
+
+table_name = "probability_hr.xlsx";
+opts = spreadsheetImportOptions('NumVariables',16,'VariableNamingRule',"preserve");
+social = readtable(table_name,opts,'ReadVariableNames',true);
+% minimal cleaning
+social = removevars(social, "Var1");
+social(1,:) = [];
+social.Properties.VariableNames = {'index', 'subjectidnumber','tasktypedone','decision_made','real_r','real_c','bpm','timesteps',...
+	'number_of_timesteps','avg_hr','raw_max_hr','raw_min_hr','percent_max_hr','percent_min_hr','direction'};
+
+%% linear plots w/ stats
+save_to = 'C:\Users\lrako\OneDrive\Documents\dec-making-app\final_run\';
+plot_timing_vs_eng_inc(moral, 'moral', save_to)
+plot_timing_vs_eng_inc(social, 'social',save_to)
+plot_timing_vs_eng_inc(prob, 'prob',save_to)
+plot_timing_vs_eng_inc(appr_avoid, 'appr_avoid',save_to)
+
+%% dec making plots
+
+map_type = "decision_timing";
+tit = "appr_avoid";
+table = appr_avoid;
+
+if isequal(map_type, "decision_timing")
+    table.decision_timing = get_arr(table.decision_timing);
+    table = table(table.decision_timing ~= 0, :);
+elseif isequal(map_type, "num_local_maxima")
+    table.num_maxes = get_arr(table.num_maxes);
+elseif isequal(map_type, "num_inc_in_eng")
+    table.big_ups = get_arr(table.big_ups);
+end
+
+table.real_r = get_arr(table.real_r);
+table.real_c = get_arr(table.real_c);
+
+make_dec_timing_map(table, tit, map_type)
+
+%% bar plots across tasks
+
+save_to = 'C:\Users\lrako\OneDrive\Documents\dec-making-app\final_run\';
+tasks = {"appr avoid", "social", "moral", "prob"};
+tables = {appr_avoid, social, moral, prob};
+bar_type = "eng around dec";
+
+bar_plots_by_trial(tasks,tables,bar_type,save_to)
+bar_plots_by_subject(tasks,tables,bar_type,save_to)
+
+%% 2D plot for separation
+
+save_to =  'C:\Users\lrako\OneDrive\Documents\dec-making-app\final_run\';
+tasks = {"appr avoid", "social", "moral", "prob"};
+tables = {appr_avoid, social, moral, prob};
+colors = ["r", "k", "c", "m"];
+
+separation_across_tasks_by_subject(tasks, tables, colors,save_to)
+separation_across_tasks_by_trial(tasks, tables, colors,save_to)
+
+%% 3D plot for separation
+
+save_to =  'C:\Users\lrako\OneDrive\Documents\dec-making-app\final_run\';
+tasks = {"appr avoid", "social", "moral", "prob"};
+tables = {appr_avoid, social, moral, prob};
+colors = ["r", "k", "c", "m"];
+
+separation_across_tasks_by_subject_3d(tasks, tables, colors,save_to)
+%separation_across_tasks_by_trial_3d(tasks, tables, colors,save_to)
+
+%% timing plots within task
+
+tasks = {"appr avoid", "social", "moral", "prob"};
+tables = {appr_avoid, social, moral, prob};
+save_to =  'C:\Users\lrako\OneDrive\Documents\dec-making-app\final_run\';
+
+for i = 1:length(tasks)
+    tit = tasks(i);
+    table = tables(i);
+    bar_plots_within_task_by_trial(table{1}, tit, "cost",save_to)
+    bar_plots_within_task_by_trial(table{1}, tit, "reward",save_to)
+
+    bar_plots_within_task_by_subject(table{1}, tit, "cost",save_to)
+    bar_plots_within_task_by_subject(table{1}, tit, "reward",save_to)
+end
+
+%% correlations between eye tracking feature and reward/cost level
+
