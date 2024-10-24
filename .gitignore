@@ -1,6 +1,7 @@
 *.png
 *.pdf
 *.fig
-*matlab_code/*mat
+matlab_code/*mat
 *.xlsx
 *.csv
+first_cut/*
